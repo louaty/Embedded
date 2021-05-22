@@ -19,124 +19,184 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "usart.h"
+#include "stm32l053xx.h"
+#include "led.h"
+#include "button.h"
+#include "sensor.h"
+#include <stdio.h>
 #include "gpio.h"
+#include "usart.h"
+//pour les interruptions
+#include "stm32l0xx_ll_exti.h"
 
 
-USART_TypeDef servo;
 
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-
-/* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
-/* USER CODE BEGIN PTD */
+void Bouton_Led_Polling(uint8_t *last_button_state, LED_TypeDef *led, BUTTON_TypeDef *button);
 
-/* USER CODE END PTD */
-
-/* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-
-/* USER CODE END PM */
+void SystemClock_Config(void);
 
 /* Private variables ---------------------------------------------------------*/
+LED_TypeDef led;
+uint8_t n_pn;
+SENSOR_TypeDef sensor;
+uint8_t sensorValue;
+uint8_t last_button_state=1;
+BUTTON_TypeDef button;
 
-/* USER CODE BEGIN PV */
+/* function prototypes -----------------------------------------------*/
 
-/* USER CODE END PV */
+void AlternateFunction(GPIO_TypeDef * port, uint8_t pin, uint8_t af){
+		uint8_t nb_port;
+		nb_port=(uint32_t)((uint32_t *)port - IOPPERIPH_BASE)/ (uint32_t)0x400;
+		/*Activer l’horloge */
+		RCC->IOPENR|=1<<nb_port;
+		/*configuration de la pin en mode alternate*/
+		port->MODER&=~(0b11<<(2*pin));
+		port->MODER|=(0b10<<(2*pin));
 
-/* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-/* USER CODE BEGIN PFP */
+		/*Activer la fonction alternative « af »*/
+		if (pin<8)
+		{
+			port->AFR[0] &=~(0b1111<<(4*pin));
+			port->AFR[0] |=(af<<(4*pin));
+		}
+		else if (pin<16)
+		{
+			port->AFR[1]&=~(0b1111<<4*(pin-8));
+			port->AFR[1]|=(af<<4*(pin-8));
+		}
 
-
-void ADC_init(ADC_TypeDef * adc, uint8_t resolution, uint8_t channel) ;
-
-void AlternateFunction(GPIO_TypeDef * port, uint8_t pin, uint8_t af);
-
-void PWM(TIM_TypeDef * timer, uint8_t canal, uint32_t HCLKFrequency, uint32_t PWMFrequency,float duty_cycle) ;
-
-
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-
-/* USER CODE END 0 */
-
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
+}
 
 
+
+
+void Servo_PWM(TIM_TypeDef * timer, uint8_t canal, uint32_t HCLKFrequency, uint32_t PWMFrequency ,float duty_cycle) {
+	/* Activer l’horloge du timer*/
+
+	if(timer ==TIM2){
+			   RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+	}else if(timer ==TIM22){
+			   RCC->APB2ENR |= RCC_APB2ENR_TIM22EN;
+		   }else if(timer ==TIM6){
+			   RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
+	}else if(timer ==TIM21){
+			   RCC->APB2ENR |= RCC_APB2ENR_TIM21EN;
+	} timer->CR1|=TIM_CR1_DIR_Msk;
+		   /*Activation du PWM */
+		   if( canal ==1){
+					  timer->CCMR1 &= ~TIM_CCMR1_OC1M_0;
+					  timer->CCMR1 |= TIM_CCMR1_OC1M_1| TIM_CCMR1_OC1M_2;
+					  timer->CCER |= TIM_CCER_CC1E;/*activation du PWM du canal*/
+				  }
+				  else if(canal==2){
+					  timer->CCMR1 &= ~TIM_CCMR1_OC2M_0;
+					  timer->CCMR1 |= TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2M_2;
+					  timer->CCER |= TIM_CCER_CC2E;
+				  }int ARR = HCLKFrequency/PWMFrequency - 1;
+				  if (ARR>65535) {
+					  /* la valeur du prescaler*/
+					  timer->PSC=999;
+					  timer->ARR = HCLKFrequency/(PWMFrequency*(timer->PSC+1))-1;
+
+				  }else {
+					  timer->ARR=ARR;
+
+				  }
+				  /*configuration la valeur du registre de comparaison*/
+				  if(canal==1){
+					  timer->CCR1 = (timer->ARR+1)*duty_cycle;
+				  }
+				  else if(canal==2){
+					  timer->CCR2 = (timer->ARR+1)*duty_cycle;
+				  } /*activatin du timer*/
+				  timer->CR1|=TIM_CR1_CEN_Msk;
+
+}
 
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
 
-  /* USER CODE END 1 */
+	 /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+	 LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_SYSCFG);
+	 LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_PWR);
 
-  /* MCU Configuration--------------------------------------------------------*/
+	 //sensor
+	 Sensor_init(&sensor, ADC1, 8, 8);
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-
-  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_SYSCFG);
-  LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_PWR);
-
-  /* System interrupt init*/
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_USART2_UART_Init();
-  /* USER CODE BEGIN 2 */
-
-  AlternateFunction(GPIOB, 4, 1);
-   PWM(TIM2, 2, 16000000, 5,0.25);
+	//configuration de l'horloge du système en 16MHz
+	  RCC->IOPENR|= RCC_IOPENR_GPIOAEN | RCC_IOPENR_GPIOBEN;
+	  LL_Init1msTick(16000000);
 
 
-  /* USER CODE END 2 */
 
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
+	 SystemClock_Config();
+
+
+	 //configuration de la led sur la pin PA5
+	 Led_init(&led, GPIOC,5,6,8);
+
+	 //configuration du bouton sur la pin PA10
+	 Button_init(&button,GPIOA,8,LL_GPIO_PULL_DOWN);
+
+
+
+
+
+	 RCC->IOPENR|=RCC_IOPENR_GPIOAEN; GPIOA->MODER&=~(0b11<<(2*0));
+	 GPIOA->MODER |= (0b01<<(2*0));
+
   while (1)
   {
+
+
+
+
     /* USER CODE END WHILE */
-
-	 // while((ADC1->ISR& ADC_ISR_EOC)==0);
-
-	 	 /* if(GPIOC->IDR &(1<<7)) Led_turnOn(&led);
-	 	  else Led_turnOff(&led);*/
+	  Bouton_Led_Polling(&last_button_state, &led, &button);
 
 
-	 		  Servo_turnOn(&servo);
+	   //Servo
+
+	  	  AlternateFunction(GPIOC, 7, 0);
+	      Servo_PWM(TIM22, 2, 16000000, 50,0.01);
+
+	    //sensor
+	      sensorValue = Set_Value(&sensor); //sensorValue < 15
 
 
-    /* USER CODE BEGIN 3 */
+
+
+
+	    //si bouton appuyé allumer led,
+  		  if ((Button_State(&button) == 1) || (sensorValue < 20)) {
+  			  Led_turnOn(&led, 1);
+  			 // Servo_PWM(TIM22, 2, 16000000, 50,0.12);
+  			   Servo_PWM(TIM22, 2, 16000000, 50,0.01);
+
+  		  }
+  		//si le sensor detecte un objet allumer led
+  		  else if (sensorValue < 20){
+  			  Led_turnOn(&led, 1);
+
+  			   Servo_PWM(TIM22, 2, 16000000, 50,0.01);
+
+
+  		  }
+  		  //sinon éteindre la led
+  		  else {
+  			  Led_turnOff(&led,1);
+  		  }
+
+
   }
-  /* USER CODE END 3 */
-}
+  }
 
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
+
+
+
 void SystemClock_Config(void)
 {
   LL_FLASH_SetLatency(LL_FLASH_LATENCY_0);
@@ -169,96 +229,45 @@ void SystemClock_Config(void)
   LL_RCC_SetUSARTClockSource(LL_RCC_USART2_CLKSOURCE_PCLK1);
 }
 
-/* USER CODE BEGIN 4 */
-
-
-/* USER CODE BEGIN 4 */
-
-void ADC_init(ADC_TypeDef * adc, uint8_t resolution, uint8_t channel) {
-
-	RCC->APB2ENR |= RCC_APB2ENR_ADCEN;
-
-    //configuration de l'horloge en mode PCLK
-        adc->CFGR2|=(0b11<<ADC_CFGR2_CKMODE_Pos); // 30
-
-        //Activation de la conversion en continu
-        	adc->CFGR1|=(0b1<<ADC_CFGR1_CONT_Pos);
-        	ADC_CFGR1_CONT == 1;
-
-        //choix de la résolution
-		   if (resolution == 12){
-				adc->CFGR1 &= ~(0b11<<3U); //
-			}else if (resolution == 10){
-				adc->CFGR1 &= ~(0b1<<4);
-				adc->CFGR1 |= (0b1<<3);
-			}else if (resolution == 8){
-				adc->CFGR1 |= (0b1<<4);
-				adc->CFGR1 &= ~(0b1<<3);
-			}else if (resolution == 6){
-				adc->CFGR1 |= (0b11<<3U);
-			}
-
-    	adc->CHSELR|=0b1<<channel; //selection de channel
-
-
-        adc->CR|=0b1<<ADC_CR_ADEN_Pos; //activer le convertisseur
-
-
-        adc->CR|=0b1<<ADC_CR_ADSTART_Pos; //lancer la conversion
-
-
-    }
-
-
-	void AlternateFunction(GPIO_TypeDef * port, uint8_t pin, uint8_t af){
-
-			/*Activation de l'horlogr*/
-			uint8_t nb_port;
-			nb_port=(uint32_t)((uint32_t *)port - IOPPERIPH_BASE)/ (uint32_t)0x400;
-			RCC->IOPENR|=1<<nb_port;
-
-			/*configuration de pin PC7 en alternate*/
-			GPIOC->MODER&=~(0b11<<(7*2));
-			GPIOC->MODER|=(0b10<<(7*2));
-			GPIOC->AFR[0]&=~(0b1111<<((pin-8)*4)); /*AFR[0] représenteAFRL et AFR[1] AFRH*/
-
-	}
-
-	void PWM(TIM_TypeDef * timer, uint8_t canal, uint32_t HCLKFrequency, uint32_t PWMFrequency,float duty_cycle){
-
-		if (timer == TIM22){
-				RCC->APB2ENR|= RCC_APB2ENR_TIM22EN;
-			} else if(timer == TIM21){
-				RCC->APB2ENR|= RCC_APB2ENR_TIM21EN;
-
-			}else if(timer == TIM6){
-				RCC->APB1ENR|= RCC_APB1ENR_TIM6EN;
-			}else if(timer == TIM2){
-				RCC->APB1ENR|= RCC_APB1ENR_TIM2EN;
-			}
-
-			//configuration en mode1 PWM de canal2
-			timer->CCMR1&= ~TIM_CCMR1_OC2M_0;
-			timer->CCMR1|= TIM_CCMR1_OC2M_1| TIM_CCMR1_OC2M_2;
-
-			timer->CCER|= TIM_CCER_CC2E;  //activation de canal2
-
-
-			timer->ARR= HCLKFrequency / (PWMFrequency *1000)-1;
-
-			timer->CCR1=799;
-			timer->CCR1=200; //25%
 
 
 
-			timer->CR1|=1; //lancement de timer
+void Bouton_Led_Polling(uint8_t *last_button_state, LED_TypeDef *led, BUTTON_TypeDef *button){
+
+
+
+	   uint8_t current_button_state = Button_State(button);
+	    if((*last_button_state==1) && (current_button_state!=1)){
+	        Led_toggle(led, 1);
+	        Led_toggle(led, 2);
+	        Led_toggle(led, 3);
+	        LL_mDelay(20);
+	    }
+
+	    if((*last_button_state!=1) &&  (current_button_state==1)){
+	        LL_mDelay(20);
+	    }
+
+	    *last_button_state = current_button_state;
 
 	}
 
 
 
-/* USER CODE END 4 */
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
 
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+
+
+/* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
 
@@ -266,16 +275,6 @@ void ADC_init(ADC_TypeDef * adc, uint8_t resolution, uint8_t channel) {
   * @brief  This function is executed in case of error occurrence.
   * @retval None
   */
-void Error_Handler(void)
-{
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
-  /* USER CODE END Error_Handler_Debug */
-}
 
 #ifdef  USE_FULL_ASSERT
 /**
